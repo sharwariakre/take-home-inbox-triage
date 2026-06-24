@@ -7,8 +7,8 @@ it). Run it with `make serve`.
 Auth model — read it carefully, the security requirements depend on it:
 
   * `GET /inbox` accepts EITHER the read token or the write token.
-  * All write endpoints (`/mail/send`, `/crm/contact`, `/crm/deal`) require the
-    WRITE token specifically. The read token is rejected with 403.
+  * All write endpoints (`/mail/send`, `/crm/lead`) require the WRITE token
+    specifically. The read token is rejected with 403.
 
 Tokens are read from the environment (see .env.example). Pass them as
 `Authorization: Bearer <token>`.
