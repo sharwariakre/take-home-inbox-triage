@@ -103,3 +103,45 @@ Questions before you start? Email us. Once you open the scaffold, the clock is y
 ---
 
 <!-- ↓↓↓ CANDIDATE: add your "README the client could read" section here ↓↓↓ -->
+
+## What This Does
+
+This agent gives your team a head start on every customer email so no one ever
+stares at a blank inbox.
+
+When a message comes in, the agent reads it and sorts it into one of four buckets —
+a **billing issue**, a **bug report**, a **sales lead**, or **spam**. Then it drafts
+the right next step for each one:
+
+- A **billing** email → a draft reply back to the customer.
+- A **bug report** → an alert to your engineering team so they can jump on it.
+- A **sales lead** → a draft reply *and* a new entry in your CRM so nothing slips
+  through the cracks.
+- **Spam** → quietly set aside. No action, no noise.
+
+The result: your people spend their time reviewing and approving good drafts instead
+of triaging a pile of mail from scratch.
+
+### How to run it
+
+1. Clone this repository and install the dependencies.
+2. Copy `env.example` to `.env` and add your Anthropic API key.
+3. Start the local demo service: **`make serve`**
+4. Run the agent: **`python -m src.triage_skill`**
+
+The agent walks you through its inbox one proposed action at a time. For each one it
+shows you what it wants to do and why, then **waits for you to approve** before it
+does anything at all.
+
+### The decision I'm proudest of: you're always in control
+
+Nothing leaves the building without a human saying "yes." No reply is sent, no CRM
+record is created, and no engineering alert fires until a person reviews the draft and
+approves it. The agent **proposes; you decide.**
+
+This isn't just a convenience — it's a safety guarantee. One of our test emails is
+actually a trick: it contains hidden instructions telling the system to skip approval
+and hand over your customer list. The agent doesn't fall for it. It treats that email
+as spam and takes **zero** action. Because the approval step can't be bypassed and the
+sorting step has no power to send anything on its own, even a cleverly crafted email
+can't make the system act on its own. You stay in the driver's seat, every time.
