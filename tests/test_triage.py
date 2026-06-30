@@ -18,6 +18,7 @@ import pytest
 
 from src.triage_skill import (
     LABELS,
+    ClassificationResult,
     ProposedAction,
     TriageClient,
     TriageResult,
@@ -47,30 +48,70 @@ def _mock_anthropic_returning(label_text: str):
     return fake_module, fake_client
 
 
+def _classifier_json(label: str, confidence: str = "high", reasoning: str = "clear fit") -> str:
+    """The JSON shape classify_email now expects back from the model."""
+    return json.dumps({"label": label, "confidence": confidence, "reasoning": reasoning})
+
+
 # --- 1. classify_email returns a valid label for every fixture ------------
 
 @pytest.mark.parametrize("email", FIXTURES, ids=[e["id"] for e in FIXTURES])
 def test_classify_email_returns_valid_label(email):
     # Have the mocked model echo a plausible (here: constant) valid label;
-    # the contract under test is "result is always in LABELS".
-    fake_module, _ = _mock_anthropic_returning("billing")
+    # the contract under test is "result.label is always in LABELS".
+    fake_module, _ = _mock_anthropic_returning(_classifier_json("billing"))
     with patch.dict("sys.modules", {"anthropic": fake_module}):
-        label = classify_email(email)
-    assert label in LABELS
+        result = classify_email(email)
+    assert isinstance(result, ClassificationResult)
+    assert result.label in LABELS
+    assert result.confidence in ("high", "medium", "low")
+
+
+def test_classify_email_parses_confidence_and_reasoning():
+    fake_module, _ = _mock_anthropic_returning(
+        _classifier_json("sales_lead", "low", "mixes billing context with expansion intent")
+    )
+    with patch.dict("sys.modules", {"anthropic": fake_module}):
+        result = classify_email({"id": "x", "from": "a@b.com", "subject": "s", "body": "b"})
+    assert result.label == "sales_lead"
+    assert result.confidence == "low"
+    assert "expansion intent" in result.reasoning
 
 
 def test_classify_email_strict_parse_falls_back_to_spam():
-    # A model that returns garbage outside LABELS must collapse to the safe
-    # spam fallback (action-free, no write credentials).
-    fake_module, _ = _mock_anthropic_returning("totally-not-a-label")
+    # Unparseable model output must collapse to the safe spam fallback
+    # (action-free, no write credentials), flagged low confidence.
+    fake_module, _ = _mock_anthropic_returning("totally not json")
     with patch.dict("sys.modules", {"anthropic": fake_module}):
-        assert classify_email({"id": "x", "from": "a@b.com", "subject": "s", "body": "b"}) == "spam"
+        result = classify_email({"id": "x", "from": "a@b.com", "subject": "s", "body": "b"})
+    assert result.label == "spam"
+    assert result.confidence == "low"
+    assert "safe path" in result.reasoning
 
 
-def test_classify_email_normalises_case_and_whitespace():
-    fake_module, _ = _mock_anthropic_returning("  BILLING\n")
+def test_classify_email_invalid_label_falls_back_to_spam():
+    # Valid JSON but a label outside LABELS is still untrusted -> safe fallback.
+    fake_module, _ = _mock_anthropic_returning(_classifier_json("not_a_label"))
     with patch.dict("sys.modules", {"anthropic": fake_module}):
-        assert classify_email({"id": "x", "from": "a@b.com", "subject": "s", "body": "b"}) == "billing"
+        result = classify_email({"id": "x", "from": "a@b.com", "subject": "s", "body": "b"})
+    assert result.label == "spam"
+
+
+def test_classify_email_normalises_case_and_handles_fenced_json():
+    # Model wraps JSON in a code fence and upper-cases the label; we still parse.
+    fenced = "```json\n" + _classifier_json("BILLING") + "\n```"
+    fake_module, _ = _mock_anthropic_returning(fenced)
+    with patch.dict("sys.modules", {"anthropic": fake_module}):
+        result = classify_email({"id": "x", "from": "a@b.com", "subject": "s", "body": "b"})
+    assert result.label == "billing"
+
+
+def test_classify_email_bad_confidence_defaults_low():
+    fake_module, _ = _mock_anthropic_returning(_classifier_json("billing", "super-sure"))
+    with patch.dict("sys.modules", {"anthropic": fake_module}):
+        result = classify_email({"id": "x", "from": "a@b.com", "subject": "s", "body": "b"})
+    assert result.label == "billing"
+    assert result.confidence == "low"
 
 
 # --- 1b. draft_reply_body: LLM-drafted contextual body --------------------
@@ -113,11 +154,13 @@ def test_e007_classifier_does_not_obey_injection():
     # When the model correctly labels the injection as spam, the classifier
     # returns 'spam' and nothing downstream is planned.
     e007 = next(e for e in FIXTURES if e["id"] == "e-007")
-    fake_module, _ = _mock_anthropic_returning("spam")
+    fake_module, _ = _mock_anthropic_returning(
+        _classifier_json("spam", "high", "manipulation attempt — instructs the assistant")
+    )
     with patch.dict("sys.modules", {"anthropic": fake_module}):
-        label = classify_email(e007)
-    assert label == "spam"
-    assert plan_actions(label, e007) == []
+        result = classify_email(e007)
+    assert result.label == "spam"
+    assert plan_actions(result.label, e007) == []
 
 
 # --- 3. plan_actions routing table ---------------------------------------
@@ -258,7 +301,7 @@ def test_triage_inbox_full_pipeline_approve_all():
     results = triage_inbox(
         client,
         approver=lambda email, action: True,
-        classifier=lambda email: labels[email["id"]],
+        classifier=lambda email: ClassificationResult(labels[email["id"]], "high", "test"),
         drafter=lambda email, label: "STUB DRAFT",  # no live LLM in tests
     )
 
@@ -283,7 +326,7 @@ def test_triage_inbox_reject_all_executes_no_writes():
     results = triage_inbox(
         client,
         approver=lambda email, action: False,  # human says no to everything
-        classifier=lambda email: "billing",
+        classifier=lambda email: ClassificationResult("billing", "high", "test"),
         drafter=lambda email, label: "STUB DRAFT",
     )
 
@@ -302,7 +345,7 @@ def test_triage_inbox_uses_separate_write_client():
     triage_inbox(
         read_client,
         approver=lambda email, action: True,
-        classifier=lambda email: "sales_lead",
+        classifier=lambda email: ClassificationResult("sales_lead", "low", "ambiguous"),
         write_client=write_client,
         drafter=lambda email, label: "STUB DRAFT",
     )
