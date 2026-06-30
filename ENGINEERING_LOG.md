@@ -4,7 +4,7 @@
 > as the code. Be concrete. Bullet points are fine.
 
 **Name:** Sharwari Akre
-**Time spent (be honest):** ~2 hours
+**Time spent (be honest):** ~2 hours (Last change made before shooting the video a day later)
 
 ---
 
